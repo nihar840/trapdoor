@@ -17,8 +17,28 @@ export async function ocrImage(base64: string): Promise<string> {
   try {
     const worker = await getWorker();
     const buf = Buffer.from(base64.replace(/^data:image\/[^;]+;base64,/, ""), "base64");
-    const { data } = await worker.recognize(buf);
-    return (data.text || "").trim();
+    // First pass: raw image
+    const { data: d1 } = await worker.recognize(buf);
+    const raw = (d1.text || "").trim();
+
+    // Second pass: contrast-stretched copy to surface near-white-on-white injections
+    let enhanced = "";
+    try {
+      const { Jimp } = await import("jimp");
+      const img = await Jimp.read(buf);
+      img.contrast(0.95).greyscale();
+      const png = await img.getBuffer("image/png");
+      const { data: d2 } = await worker.recognize(png);
+      enhanced = (d2.text || "").trim();
+    } catch {}
+
+    // Merge: prefer enhanced if it found materially more text
+    if (enhanced && enhanced.length > raw.length + 20) return enhanced;
+    if (raw && enhanced) {
+      const extra = enhanced.split(/\s+/).filter((w) => !raw.includes(w)).join(" ");
+      return extra.length > 10 ? `${raw}\n[low-contrast layer]\n${enhanced}` : raw;
+    }
+    return raw || enhanced;
   } catch (e) {
     console.error("OCR failed:", e);
     return "";
