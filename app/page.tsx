@@ -158,7 +158,7 @@ export default function Home() {
 
       <section className="max-w-5xl mx-auto px-6 pb-16">
         {loading && !data && <Skeletons />}
-        {data && <Results data={data} />}
+        {data && <Results data={data} originalImage={imageBase64} />}
       </section>
     </main>
   );
@@ -181,7 +181,7 @@ function Skeletons() {
   );
 }
 
-function Results({ data }: { data: ScanResponse }) {
+function Results({ data, originalImage }: { data: ScanResponse; originalImage?: string }) {
   const hijacked = data.unprotected.hijacked;
   const raw = data.unprotected.response.replace(/^\[simulated[^\]]*\]\n+/, "");
   const simulatedMatch = data.unprotected.response.match(/^\[(simulated[^\]]*)\]/);
@@ -238,28 +238,56 @@ function Results({ data }: { data: ScanResponse }) {
       </div>
 
       {/* Detection details under the right card */}
-      {data.protected.sanitizeReport.threats.length > 0 && (
+      {(data.protected.sanitizeReport.threats.length > 0 ||
+        data.protected.sanitizeReport.decodedContent.imageNormalizedBase64) && (
         <div className="rounded-xl border border-safe-500/40 bg-safe-500/[0.03] p-5">
           <div className="text-[11px] uppercase tracking-wider text-safe-500 font-medium mb-3">
             Trapdoor detection report
           </div>
-          <div className="space-y-2">
-            {data.protected.sanitizeReport.threats.map((t) => (
-              <div key={t.id} className="flex gap-3 items-start text-[12px]">
-                <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wider font-bold bg-danger-500/15 text-danger-500">
-                  {t.severity}
-                </span>
-                <span className="shrink-0 text-ink-400 w-32">{t.category.replace(/_/g, " ")}</span>
-                <span className="text-ink-200 flex-1 leading-snug">{t.reason}</span>
+
+          {data.protected.sanitizeReport.decodedContent.imageNormalizedBase64 && originalImage && (
+            <div className="mb-4">
+              <div className="text-[11px] uppercase tracking-wider text-ink-400 font-medium mb-2">
+                Step 1 — contrast normalization {data.protected.sanitizeReport.decodedContent.imageContrastStretched ? "· hidden text revealed" : "· no faint layer found"}
               </div>
-            ))}
-          </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <div className="text-[10px] text-ink-500 mb-1 font-mono">original (as the user saw it)</div>
+                  <img src={originalImage} alt="original" className="w-full rounded-lg border border-ink-800" />
+                </div>
+                <div>
+                  <div className="text-[10px] text-ink-500 mb-1 font-mono">after Trapdoor normalization</div>
+                  <img src={data.protected.sanitizeReport.decodedContent.imageNormalizedBase64} alt="normalized" className="w-full rounded-lg border border-safe-500/50" />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {data.protected.sanitizeReport.threats.length > 0 && (
+            <>
+              <div className="text-[11px] uppercase tracking-wider text-ink-400 font-medium mb-2">
+                Step 2 — detections
+              </div>
+              <div className="space-y-2 mb-3">
+                {data.protected.sanitizeReport.threats.map((t) => (
+                  <div key={t.id} className="flex gap-3 items-start text-[12px]">
+                    <span className="shrink-0 px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wider font-bold bg-danger-500/15 text-danger-500">
+                      {t.severity}
+                    </span>
+                    <span className="shrink-0 text-ink-400 w-32">{t.category.replace(/_/g, " ")}</span>
+                    <span className="text-ink-200 flex-1 leading-snug">{t.reason}</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+
           {data.protected.sanitizeReport.decodedContent.imageOcrText && (
-            <details className="mt-4">
+            <details className="mt-2">
               <summary className="cursor-pointer text-[11px] uppercase tracking-wider text-ink-400 hover:text-ink-200 font-medium">
-                What Trapdoor saw inside the image (OCR)
+                Step 3 — extracted text (raw OCR + vision)
               </summary>
-              <pre className="mt-2 text-[11px] font-mono text-ink-300 bg-ink-950 border border-ink-800 rounded p-3 whitespace-pre-wrap leading-relaxed">
+              <pre className="mt-2 text-[11px] font-mono text-ink-300 bg-ink-950 border border-ink-800 rounded p-3 whitespace-pre-wrap leading-relaxed max-h-72 overflow-auto scrollbar-thin">
                 {data.protected.sanitizeReport.decodedContent.imageOcrText}
               </pre>
             </details>

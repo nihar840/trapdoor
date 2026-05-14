@@ -1,7 +1,7 @@
 import type { ScanRequest, SanitizeReport, Threat } from "../types";
 import { scanUnicode } from "./unicode";
 import { scanHeuristics } from "./heuristics";
-import { ocrImage, scanImageText } from "./image";
+import { inspectImage, scanImageText } from "./image";
 import { fetchUrl, scanUrlContent } from "./url";
 import { extractPdfText, scanPdfText } from "./pdf";
 import { guardClassify } from "./guard";
@@ -24,13 +24,16 @@ export async function sanitize(req: ScanRequest, opts: { useGuard?: boolean } = 
 
   if (req.imageBase64) {
     parallel.push((async () => {
-      const text = await ocrImage(req.imageBase64!);
-      decoded.imageOcrText = text;
-      threats.push(...scanImageText(text));
-      if (text) {
-        const uni2 = scanUnicode(text, "image");
+      const scan = await inspectImage(req.imageBase64!);
+      decoded.imageOcrText = scan.ocrText;
+      decoded.imageNormalizedBase64 = scan.normalizedBase64;
+      decoded.imageContrastStretched = scan.contrastStretched;
+      decoded.imageDescription = scan.caption.description;
+      threats.push(...scanImageText(scan.ocrText));
+      if (scan.ocrText) {
+        const uni2 = scanUnicode(scan.ocrText, "image");
         threats.push(...uni2.threats);
-        threats.push(...scanHeuristics(text, "image"));
+        threats.push(...scanHeuristics(scan.ocrText, "image"));
       }
     })());
   }

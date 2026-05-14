@@ -26,6 +26,9 @@ export interface SanitizeReport {
   threats: Threat[];
   decodedContent: {
     imageOcrText?: string;
+    imageNormalizedBase64?: string;
+    imageContrastStretched?: boolean;
+    imageDescription?: string;
     urlBody?: string;
     urlSafeBody?: string;
     pdfText?: string;

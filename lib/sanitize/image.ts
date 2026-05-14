@@ -1,5 +1,6 @@
 import type { Threat } from "../types";
-import { visionOcr } from "./visionOcr";
+import { visionExtractAllText, visionCaption } from "./visionOcr";
+import { normalizeImage } from "./imageNormalize";
 
 let workerPromise: Promise<any> | null = null;
 
@@ -25,55 +26,84 @@ async function tesseractOcr(base64: string): Promise<string> {
   }
 }
 
+export interface ImageScan {
+  originalBase64: string;
+  normalizedBase64: string;
+  /** True if normalization changed the pixel range materially (contrast was stretched). */
+  contrastStretched: boolean;
+  ocrText: string;
+  caption: {
+    description: string;
+    visibleText: string;
+    suspiciousText: string;
+  };
+}
+
 /**
- * Two-engine OCR:
- *  - tesseract for fast, free local OCR of clearly-rendered text
- *  - Claude vision as a second pass that reliably picks up faint /
- *    low-contrast / hidden text that tesseract misses.
- * Results are merged and labeled.
+ * Full image inspection: normalize → OCR (tesseract + vision on both
+ * original and normalized) → caption.
  */
-export async function ocrImage(base64: string): Promise<string> {
-  const [tess, vision] = await Promise.all([
+export async function inspectImage(base64: string): Promise<ImageScan> {
+  const { normalizedBase64, changed } = await normalizeImage(base64);
+
+  const [tessOrig, tessNorm, visionAll, caption] = await Promise.all([
     tesseractOcr(base64),
-    visionOcr(base64),
+    tesseractOcr(normalizedBase64),
+    visionExtractAllText(normalizedBase64),
+    visionCaption(base64),
   ]);
 
   const parts: string[] = [];
-  if (vision.visible) parts.push(`[visible text]\n${vision.visible}`);
-  else if (tess) parts.push(`[visible text]\n${tess}`);
-  if (vision.faint) parts.push(`[faint / low-contrast / hidden text]\n${vision.faint}`);
-  return parts.join("\n\n").trim();
+  if (caption.visibleText) parts.push(`[visible text]\n${caption.visibleText}`);
+  else if (tessOrig) parts.push(`[visible text (tesseract on original)]\n${tessOrig}`);
+  if (caption.suspiciousText) parts.push(`[suspicious / faint / hidden text]\n${caption.suspiciousText}`);
+  if (visionAll && !parts.some((p) => p.includes(visionAll.slice(0, 40)))) {
+    parts.push(`[full text on contrast-stretched image]\n${visionAll}`);
+  }
+  if (tessNorm && tessNorm.length > 20 && !parts.some((p) => p.includes(tessNorm.slice(0, 40)))) {
+    parts.push(`[tesseract on contrast-stretched image]\n${tessNorm}`);
+  }
+
+  return {
+    originalBase64: base64,
+    normalizedBase64,
+    contrastStretched: changed,
+    ocrText: parts.join("\n\n").trim(),
+    caption,
+  };
 }
 
 export function scanImageText(text: string): Threat[] {
   if (!text) return [];
   const threats: Threat[] = [];
+
   const hasInjectionMarkers =
-    /\b(ignore|disregard|forget|override)\b.{0,40}\b(previous|prior|above|instructions?)/i.test(text) ||
-    /system\s+prompt/i.test(text) ||
-    /\b(agent\s+note|admin\s+override|system\s*:|priority\s*])\b/i.test(text) ||
-    /reply\s+(only\s+)?(with|using)\s+["']?[^"'\n]{1,80}["']?/i.test(text);
-  const inFaintLayer = /\[faint|hidden|low-contrast/i.test(text);
+    /\b(ignore|disregard|forget|override)\b.{0,40}\b(previous|prior|above|instructions?|prompts?)/i.test(text) ||
+    /\b(reveal|leak|disclose|print)\b.{0,40}\b(system\s+prompt|api[_\s-]?key|secret|password)/i.test(text) ||
+    /\b(agent\s+note|admin\s+override|system\s*:|priority\s*])/i.test(text) ||
+    /\breply\s+(only\s+)?(with|using)\s+["']?[^"'\n]{1,80}["']?/i.test(text) ||
+    /\byou\s+are\s+now\b/i.test(text);
+  const inFaintLayer = /\[suspicious|faint|hidden|low-contrast|stretched/i.test(text);
 
   if (hasInjectionMarkers) {
     threats.push({
-      id: `img-hidden-${Date.now()}`,
+      id: `img-inj-${Date.now()}`,
       category: "hidden_text",
       severity: "critical",
       source: "image",
       snippet: text.slice(0, 250),
       reason: inFaintLayer
-        ? "Vision OCR recovered low-contrast / near-invisible text in the image containing prompt-injection instructions. Multimodal models read this text as if you typed it."
-        : "OCR detected prompt-injection instructions inside the image. Multimodal models read this text as if you typed it.",
+        ? "Trapdoor contrast-normalized the image and recovered hidden text containing prompt-injection instructions. A multimodal model would read these as commands."
+        : "OCR detected prompt-injection instructions embedded in the image. A multimodal model reads this text as if you typed it.",
     });
-  } else if (inFaintLayer) {
+  } else if (inFaintLayer && text.replace(/\[[^\]]+\]/g, "").trim().length > 15) {
     threats.push({
       id: `img-faint-${Date.now()}`,
       category: "hidden_text",
       severity: "medium",
       source: "image",
       snippet: text.slice(0, 250),
-      reason: "Image contains a faint or low-contrast text layer invisible at normal viewing. Worth inspecting even if no injection pattern matched.",
+      reason: "Trapdoor's contrast normalization revealed a faint text layer not visible at normal viewing. No injection keywords matched, but inspect manually.",
     });
   } else if (text.length > 30) {
     threats.push({
@@ -82,7 +112,7 @@ export function scanImageText(text: string): Threat[] {
       severity: "info",
       source: "image",
       snippet: text.slice(0, 200),
-      reason: "Image contains embedded text that the vision model will interpret. Verify it is intentional.",
+      reason: "Image contains embedded text. Vision models will read it as part of the prompt context.",
     });
   }
   return threats;
