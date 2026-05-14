@@ -32,6 +32,8 @@ export interface SanitizeReport {
     urlBody?: string;
     urlSafeBody?: string;
     pdfText?: string;
+    canonicalEnglish?: string;
+    languagesDetected?: string[];
   };
   cleanPrompt: string;
   blocked: boolean;

@@ -5,6 +5,7 @@ import { inspectImage, scanImageText } from "./image";
 import { fetchUrl, scanUrlContent } from "./url";
 import { extractPdfText, scanPdfText } from "./pdf";
 import { guardClassify } from "./guard";
+import { normalizeMultilingual, scriptEntropy } from "./multilingual";
 
 const SEVERITY_RANK: Record<string, number> = {
   info: 0, low: 1, medium: 2, high: 3, critical: 4,
@@ -63,6 +64,45 @@ export async function sanitize(req: ScanRequest, opts: { useGuard?: boolean } = 
   }
 
   await Promise.all(parallel);
+
+  // Multilingual normalization: collect all extracted untrusted text, ask Haiku
+  // to rewrite it in canonical English, then re-run heuristics on that.
+  // This catches code-switched / mixed-script obfuscation that bypasses
+  // English-only regex.
+  const candidateTexts = [
+    decoded.imageOcrText,
+    decoded.urlBody,
+    decoded.pdfText,
+  ].filter((s): s is string => !!s && s.trim().length > 0);
+
+  // Also normalize the user prompt itself if it contains non-ASCII content.
+  const promptEntropy = scriptEntropy(cleanPrompt);
+  if (promptEntropy.scripts.length > 0 || /[-￿]/.test(cleanPrompt)) {
+    candidateTexts.push(cleanPrompt);
+  }
+
+  if (candidateTexts.length > 0) {
+    const joined = candidateTexts.join("\n\n---\n\n");
+    const norm = await normalizeMultilingual(joined);
+    if (norm) {
+      decoded.canonicalEnglish = norm.canonicalEnglish;
+      decoded.languagesDetected = norm.languagesDetected;
+      // Re-run English heuristics on the canonical translation.
+      const canonicalThreats = scanHeuristics(norm.canonicalEnglish, "image");
+      threats.push(...canonicalThreats);
+
+      if (norm.looksLikeInjection) {
+        threats.push({
+          id: `multi-inj-${Date.now()}`,
+          category: "instruction_override",
+          severity: "critical",
+          source: "image",
+          snippet: norm.canonicalEnglish.slice(0, 250),
+          reason: `Multilingual normalization revealed an injection. Original payload was split across ${norm.languagesDetected.length} language(s) (${norm.languagesDetected.slice(0, 6).join(", ")}) to evade English-only filters; canonical-English meaning is shown below.`,
+        });
+      }
+    }
+  }
 
   if (opts.useGuard) {
     const guardTargets: { text: string; source: Threat["source"] }[] = [];

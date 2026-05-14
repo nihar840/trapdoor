@@ -66,7 +66,9 @@ export async function POST(req: NextRequest) {
   // If we found something the injection is trying to force the model to say,
   // simulate what a weaker model would have done — that's the unprotected demo.
   if (!simulated) {
+    // Prefer canonical-English target extraction (handles multilingual / obfuscated payloads).
     const sources = [
+      report.decodedContent.canonicalEnglish,
       report.decodedContent.imageOcrText,
       report.decodedContent.urlBody,
       report.decodedContent.pdfText,
