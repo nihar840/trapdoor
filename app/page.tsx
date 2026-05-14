@@ -9,6 +9,9 @@ export default function Home() {
   const [imageBase64, setImageBase64] = useState<string | undefined>();
   const [imageName, setImageName] = useState<string | undefined>();
   const [usingDemoImage, setUsingDemoImage] = useState(false);
+  const [documentBase64, setDocumentBase64] = useState<string | undefined>();
+  const [documentName, setDocumentName] = useState<string | undefined>();
+  const [usingDemoPdf, setUsingDemoPdf] = useState(false);
   const [data, setData] = useState<ScanResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -49,6 +52,30 @@ export default function Home() {
     setUsingDemoImage(false);
   };
 
+  const loadDemoPdf = async () => {
+    setDocumentName("invoice-binary.pdf (loading…)");
+    setUsingDemoPdf(true);
+    try {
+      const res = await fetch("/invoice-binary.pdf");
+      const blob = await res.blob();
+      const reader = new FileReader();
+      reader.onload = () => {
+        setDocumentBase64(reader.result as string);
+        setDocumentName("invoice-binary.pdf");
+      };
+      reader.readAsDataURL(blob);
+    } catch {
+      setDocumentName("invoice-binary.pdf");
+      setDocumentBase64(undefined);
+    }
+  };
+
+  const clearDoc = () => {
+    setDocumentBase64(undefined);
+    setDocumentName(undefined);
+    setUsingDemoPdf(false);
+  };
+
   const run = async () => {
     setLoading(true);
     setError(null);
@@ -60,6 +87,7 @@ export default function Home() {
         body: JSON.stringify({
           prompt,
           imageBase64,
+          documentBase64,
           scenarioId: usingDemoImage ? "img-invisible" : undefined,
         }),
       });
@@ -160,9 +188,37 @@ export default function Home() {
             )}
           </div>
 
+          <div>
+            <label className="text-[11px] uppercase tracking-wider text-ink-400 font-medium block mb-1.5">Document (PDF)</label>
+            <div className="flex gap-2 flex-wrap items-center">
+              <button
+                onClick={loadDemoPdf}
+                className="flex items-center gap-2 px-3 py-2 rounded-lg border border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/20 text-sm text-amber-500 transition-colors"
+              >
+                <Sparkles className="w-4 h-4" />
+                Demo: binary-encoded PDF injection
+              </button>
+              {documentName && (
+                <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-ink-950 border border-ink-800 text-sm text-ink-200">
+                  <span className="truncate max-w-[200px]">{documentName}</span>
+                  <button onClick={clearDoc} className="text-ink-400 hover:text-danger-500">
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+            </div>
+            {usingDemoPdf && (
+              <div className="mt-2 text-[11px] text-amber-500/80 leading-relaxed">
+                Visible content: a plain Acme Coffee invoice. Hidden in the PDF text layer (white-on-white at the bottom):
+                an injection encoded as ASCII binary <code className="text-ink-300">01001001 01100111 01101110 …</code> — over 500 bits.
+                A naive PDF sanitizer sees noise. Modern LLMs decode and follow.
+              </div>
+            )}
+          </div>
+
           <button
             onClick={run}
-            disabled={loading || (!prompt.trim() && !imageBase64 && !usingDemoImage)}
+            disabled={loading || (!prompt.trim() && !imageBase64 && !usingDemoImage && !documentBase64)}
             className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-lg bg-safe-500 hover:bg-safe-600 disabled:bg-ink-800 disabled:text-ink-600 text-ink-950 font-semibold text-sm transition-colors"
           >
             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
@@ -300,6 +356,31 @@ function Results({ data, originalImage }: { data: ScanResponse; originalImage?: 
               </div>
             </>
           )}
+
+          {data.protected.sanitizeReport.decodedContent.decodedEncodings &&
+            data.protected.sanitizeReport.decodedContent.decodedEncodings.length > 0 && (
+              <div className="mt-3 mb-3">
+                <div className="text-[11px] uppercase tracking-wider text-ink-400 font-medium mb-2">
+                  Encoded payloads decoded
+                  <span className="ml-2 text-amber-500">· {data.protected.sanitizeReport.decodedContent.decodedEncodings.length} span(s)</span>
+                </div>
+                <div className="space-y-2">
+                  {data.protected.sanitizeReport.decodedContent.decodedEncodings.map((d, i) => (
+                    <div key={i} className="grid grid-cols-[80px_1fr] gap-2 text-[11px]">
+                      <span className="font-mono text-amber-500 uppercase tracking-wider">{d.encoding}</span>
+                      <div>
+                        <pre className="font-mono text-ink-500 bg-ink-950 border border-ink-800 rounded p-2 whitespace-pre-wrap leading-tight max-h-12 overflow-hidden">
+                          {d.source.slice(0, 200)}{d.source.length > 200 ? "…" : ""}
+                        </pre>
+                        <pre className="mt-1 font-mono text-ink-100 bg-safe-500/[0.05] border border-safe-500/30 rounded p-2 whitespace-pre-wrap leading-snug">
+                          → {d.decoded.slice(0, 200)}
+                        </pre>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
           {data.protected.sanitizeReport.decodedContent.canonicalEnglish && (
             <div className="mt-3 mb-3">

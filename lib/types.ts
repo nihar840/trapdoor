@@ -34,6 +34,7 @@ export interface SanitizeReport {
     pdfText?: string;
     canonicalEnglish?: string;
     languagesDetected?: string[];
+    decodedEncodings?: Array<{ encoding: string; source: string; decoded: string }>;
   };
   cleanPrompt: string;
   blocked: boolean;

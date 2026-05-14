@@ -6,6 +6,7 @@ import { fetchUrl, scanUrlContent } from "./url";
 import { extractPdfText, scanPdfText } from "./pdf";
 import { guardClassify } from "./guard";
 import { normalizeMultilingual, scriptEntropy } from "./multilingual";
+import { decodeEncodings } from "./encodings";
 
 const SEVERITY_RANK: Record<string, number> = {
   info: 0, low: 1, medium: 2, high: 3, critical: 4,
@@ -79,6 +80,31 @@ export async function sanitize(req: ScanRequest, opts: { useGuard?: boolean } = 
   const promptEntropy = scriptEntropy(cleanPrompt);
   if (promptEntropy.scripts.length > 0 || /[-￿]/.test(cleanPrompt)) {
     candidateTexts.push(cleanPrompt);
+  }
+
+  // Encoding decoder pass — binary, hex, base64, octal, decimal-codepoints,
+  // unicode escapes. Decoded payloads are appended so heuristics + the
+  // multilingual normalizer see them.
+  const encodingsDecoded: Array<{ encoding: string; source: string; decoded: string }> = [];
+  if (candidateTexts.length > 0) {
+    const merged = candidateTexts.join("\n\n");
+    const { spans } = decodeEncodings(merged);
+    if (spans.length > 0) {
+      encodingsDecoded.push(...spans);
+      decoded.decodedEncodings = spans;
+      const decodedText = spans.map((s) => s.decoded).join("\n");
+      // Run heuristics on the decoded payload directly — catches binary-encoded injections.
+      threats.push(...scanHeuristics(decodedText, "document"));
+      threats.push({
+        id: `enc-${Date.now()}`,
+        category: "encoded_payload",
+        severity: "high",
+        source: "document",
+        snippet: spans.map((s) => `${s.encoding}: ${s.decoded.slice(0, 80)}`).join(" | ").slice(0, 250),
+        reason: `Trapdoor decoded ${spans.length} obfuscated payload span(s) (${[...new Set(spans.map((s) => s.encoding))].join(", ")}). Encoded payloads bypass plaintext filters but the model decodes them at inference time.`,
+      });
+      candidateTexts.push(decodedText);
+    }
   }
 
   if (candidateTexts.length > 0) {
