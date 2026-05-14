@@ -32,13 +32,14 @@ export async function POST(req: NextRequest) {
   const report = await sanitize(body, { useGuard: false });
 
   // Bake OCR for image scenario (we don't ship a real PNG)
-  // If demo image was used, ensure the OCR text and detections fire even if tesseract missed the low-contrast layer
-  if (body.scenarioId === "img-invisible") {
-    const baked = BAKED_IMAGE_OCR["pirate-injected"];
+  // Last-resort baked fallback for the demo image — only fires if real OCR somehow returned nothing usable
+  if (body.scenarioId === "img-invisible" && body.imageBase64) {
     const existing = report.decodedContent.imageOcrText || "";
-    if (!/apple is white/i.test(existing) && !/ignore.*previous.*instruction/i.test(existing)) {
+    const detectedAlready = /apple is white/i.test(existing) || /ignore.*previous.*instruction/i.test(existing);
+    if (!detectedAlready) {
+      const baked = BAKED_IMAGE_OCR["pirate-injected"];
       report.decodedContent.imageOcrText = existing
-        ? `${existing}\n[low-contrast layer recovered by Trapdoor contrast enhancement]\n${baked}`
+        ? `${existing}\n[Trapdoor fallback: known demo image]\n${baked}`
         : baked;
       report.threats.push(...scanImageText(baked));
       report.threats.push(...scanHeuristics(baked, "image"));
@@ -46,6 +47,8 @@ export async function POST(req: NextRequest) {
     if (report.threats.some((t) => t.severity === "critical" || t.severity === "high")) {
       report.blocked = true;
     }
+  } else if (report.threats.some((t) => t.severity === "critical" || t.severity === "high")) {
+    report.blocked = true;
   }
 
   // Strip the legitimate question free of any injection for the protected call

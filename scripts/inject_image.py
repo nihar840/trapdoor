@@ -61,8 +61,8 @@ def main():
     # Vertical placement inside the strip
     y = H + 16
     line_h = font.size + 6 if hasattr(font, "size") else 20
-    # Near-white text: #fafafa on #ffffff. Imperceptible at normal viewing, OCR-readable.
-    color = (250, 250, 250)
+    # Subtle low-contrast text: #e0e0e0 on #ffffff. Easy for the eye to miss, reliably OCR-readable.
+    color = (224, 224, 224)
     for line in lines:
         draw.text((20, y), line, fill=color, font=font)
         y += line_h
